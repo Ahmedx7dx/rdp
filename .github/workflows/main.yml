@@ -9,9 +9,9 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-      - name: Configure Core RDP Settings
+      - name: Enable and Configure RDP
         run: |
-          # Enable Remote Desktop and disable Network Level Authentication (if needed)
+          # Enable Remote Desktop and disable Network Level Authentication
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
                            -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
@@ -19,41 +19,39 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
                            -Name "SecurityLayer" -Value 0 -Force
 
-          # Remove any existing rule with the same name to avoid duplication
-          netsh advfirewall firewall delete rule name="RDP-Tailscale"
-          
-          # Allow incoming RDP connections (port 3389)
-          netsh advfirewall firewall add rule name="RDP-Tailscale" `
-            dir=in action=allow protocol=TCP localport=3389
+          # Allow RDP traffic through firewall
+          netsh advfirewall firewall delete rule name="RDP-Allow" > $null 2>&1
+          netsh advfirewall firewall add rule name="RDP-Allow" dir=in action=allow protocol=TCP localport=3389
 
-          # Restart Remote Desktop service to apply changes
           Restart-Service -Name TermService -Force
 
       - name: Create RDP User with Secure Password
         run: |
           Add-Type -AssemblyName System.Security
 
-          # Character sets
-          $charSet = @{
-              Upper   = [char[]](65..90)      # A-Z
-              Lower   = [char[]](97..122)     # a-z
-              Numbers = [char[]](48..57)      # 0-9
-              Symbols = [char[]]"!@#$%^&*()-_=+[]{};:,.<>/?"
+          # Define character sets
+          $upper = [char[]](65..90)        # A-Z
+          $lower = [char[]](97..122)       # a-z
+          $numbers = [char[]](48..57)      # 0-9
+          $symbols = [char[]]"!@#$%^&*()-_=+[]{};:,.<>/?"
+          $charPool = $upper + $lower + $numbers + $symbols
+
+          # Generate a 16-character random password
+          $password = -join ((1..16) | ForEach-Object { $charPool | Get-Random })
+
+          # Create user safely
+          $username = "RDPUser"
+          net user $username $password /add /Y
+          if ($LASTEXITCODE -eq 0) {
+            net localgroup administrators $username /add
+          } else {
+            Write-Host "❌ Failed to create user."
+            exit 1
           }
-
-          # Combine all character sets into one pool
-          $allChars = ($charSet.Values | ForEach-Object { $_ }) -join ''
-
-          # Generate a random 16-character password
-          $password = -join ((1..16) | ForEach-Object { $allChars | Get-Random })
-
-          # Create new user and add to Administrators group
-          net user RDPUser $password /add
-          net localgroup administrators RDPUser /add
 
           Write-Host "====================================="
           Write-Host "✅ RDP User Created Successfully!"
-          Write-Host "Username: RDPUser"
+          Write-Host "Username: $username"
           Write-Host "Password: $password"
           Write-Host "====================================="
 
